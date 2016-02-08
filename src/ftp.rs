@@ -28,9 +28,12 @@ impl FTPStream {
 			host: host,
 			command_port: port
 		};
+        println!("{}", connect_string);
 		match ftp_stream.read_response(220) {
 			Ok(_) => (),
-			Err(e) => return Err(Error::new(ErrorKind::Other, e))
+			Err(e) =>  {
+                return Err(Error::new(ErrorKind::Other, e))
+            }
 		}
 		Ok(ftp_stream)
 	}
@@ -48,9 +51,11 @@ impl FTPStream {
 			Ok(_) => (),
 			Err(_) => return Err(format!("Write Error"))
 		}
+        println!("ABCD");
 
 		match self.read_response(331) {
 			Ok(_) => {
+                println!("CDEF");
 
 				match self.write_str(&pass_command) {
 					Ok(_) => (),
@@ -59,10 +64,16 @@ impl FTPStream {
 
 				match self.read_response(230) {
 					Ok(_) => Ok(()),
-					Err(s) => Err(s)
+					Err(s) => {
+                        println!("WTF: {}", s);
+                        Err(s)
+                    }
 				}
 			},
-			Err(s) => Err(s)
+			Err(s) => {
+                println!("WTF2: {}", s);
+                Err(s)
+            }
 		}
 	}
 
@@ -352,6 +363,62 @@ impl FTPStream {
 		}
 	}
 
+    fn list_(&mut self, path: Option<&str>) -> Result<String, String> {
+
+        let mut list_command = String::from("LIST");
+        if let Some(path) = path {
+            list_command.push(' ');
+            list_command.push_str(path);
+        }
+        list_command.push_str("\r\n");
+
+        let port = match self.pasv() {
+            Ok(p) => p,
+            Err(e) => return Err(e)
+        };
+
+        let connect_string = format!("{}:{}", self.host, port);
+        let mut data_stream = BufReader::new(TcpStream::connect(&*connect_string).unwrap());
+
+        match self.write_str(&list_command) {
+            Ok(_) => (),
+            Err(_) => return Err(format!("Write Error"))
+        }
+
+        match self.read_response(226) {
+            Ok(_) => {
+                let mut buffer = Vec::new();
+                loop {
+                    let mut buf = [0; 256];
+                    let len = match data_stream.read(&mut buf) {
+                        Ok(len) => len,
+                        Err(e) => return Err(format!("{}", e)),
+                    };
+                    if len == 0 {
+                        break;
+                    }
+                    match buffer.write(&buf[0..len]) {
+                        Ok(_) => (),
+                        Err(e) => return Err(format!("{}", e))
+                    };
+                }
+                let immutable_buffer: Vec<u8> = buffer;
+                Ok(String::from_utf8(immutable_buffer).unwrap())
+            }
+            Err(e) => Err(e)
+        }
+    }
+
+	/// This stores a file on the server.
+	pub fn list(&mut self) -> Result<String, String> {
+        self.list_(None)
+	}
+
+	/// This stores a file on the server.
+	pub fn list_path(&mut self, path: &str) -> Result<String, String> {
+        self.list_(Some(path))
+	}
+
 	//Retrieve single line response
 	pub fn read_response(&mut self, expected_code: isize) -> Result<(isize, String), String> {
 		//Carriage return
@@ -373,12 +440,15 @@ impl FTPStream {
 		let chars_to_trim: &[char] = &['\r', '\n'];
 		let trimmed_response = response.trim_matches(chars_to_trim);
     	let trimmed_response_vec: Vec<char> = trimmed_response.chars().collect();
-    	if trimmed_response_vec.len() < 5 || trimmed_response_vec[3] != ' ' {
+    	if trimmed_response_vec.len() < 5 || (trimmed_response_vec[3] != ' ' && trimmed_response_vec[3] != '-') {
     		return Err(format!("Invalid response"));
     	}
 
     	let v: Vec<&str> = trimmed_response.splitn(2, ' ').collect();
+        println!("{:?}",v);
+        println!("{:?}",v[0]);
     	let code: isize = FromStr::from_str(v[0]).unwrap();
+        println!("{:?}",v);
     	let message = v[1];
     	if code != expected_code {
     		return Err(format!("Invalid response: {} {}", code, message))
